@@ -1,18 +1,25 @@
 // Copyright 2014 Team 254. All Rights Reserved.
 // Author: pat@patfairbank.com (Patrick Fairbank)
 //
-// Methods for configuring a Cisco Switch 3500-series switch for team VLANs.
+// Methods for configuring a Cisco Catalyst 3850 switch for team VLANs.
 
 package network
 
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
-	"github.com/Team254/cheesy-arena/model"
+	"io"
 	"net"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
+
+	"github.com/Team254/cheesy-arena/model"
 )
 
 const (
@@ -29,7 +36,10 @@ const (
 	blue1Vlan = 40
 	blue2Vlan = 50
 	blue3Vlan = 60
+	teamVlans = 6
 )
+
+const switchTeamAccessList = "DS-FMS"
 
 type Switch struct {
 	address               string
@@ -64,13 +74,17 @@ func (sw *Switch) ConfigureTeamEthernet(teams [6]*model.Team) error {
 	sw.Status = "CONFIGURING"
 
 	// Remove old team VLANs to reset the switch state.
-	removeTeamVlansCommand := ""
-	for vlan := 10; vlan <= 60; vlan += 10 {
-		removeTeamVlansCommand += fmt.Sprintf(
-			"interface Vlan%d\nno ip address\nno ip dhcp pool dhcp%d\n", vlan, vlan,
-		)
+	var removeTeamVlansCommand strings.Builder
+	for vlanIndex := 1; vlanIndex <= teamVlans; vlanIndex++ {
+		vlan := vlanIndex * 10
+		removeTeamVlansCommand.WriteString(fmt.Sprintf(
+			"interface Vlan%d\nno ip address\nno ip access-group %s in\nexit\nno ip dhcp pool dhcp%d\n",
+			vlan,
+			switchTeamAccessList,
+			vlan,
+		))
 	}
-	_, err := sw.runConfigCommand(removeTeamVlansCommand)
+	_, err := sw.runConfigCommand(removeTeamVlansCommand.String())
 	if err != nil {
 		sw.Status = "ERROR"
 		return err
@@ -78,20 +92,20 @@ func (sw *Switch) ConfigureTeamEthernet(teams [6]*model.Team) error {
 	time.Sleep(sw.configPauseDuration)
 
 	// Create the new team VLANs.
-	addTeamVlansCommand := ""
+	var addTeamVlansCommand strings.Builder
 	addTeamVlan := func(team *model.Team, vlan int) {
 		if team == nil {
 			return
 		}
 		teamPartialIp := fmt.Sprintf("%d.%d", team.Id/100, team.Id%100)
-		addTeamVlansCommand += fmt.Sprintf(
+		addTeamVlansCommand.WriteString(fmt.Sprintf(
 			"ip dhcp excluded-address 10.%s.1 10.%s.19\n"+
 				"ip dhcp excluded-address 10.%s.200 10.%s.254\n"+
 				"ip dhcp pool dhcp%d\n"+
 				"network 10.%s.0 255.255.255.0\n"+
 				"default-router 10.%s.%d\n"+
 				"lease 7\n"+
-				"interface Vlan%d\nip address 10.%s.%d 255.255.255.0\n",
+				"interface Vlan%d\nip address 10.%s.%d 255.255.255.0\nip access-group %s in\n",
 			teamPartialIp,
 			teamPartialIp,
 			teamPartialIp,
@@ -103,7 +117,8 @@ func (sw *Switch) ConfigureTeamEthernet(teams [6]*model.Team) error {
 			vlan,
 			teamPartialIp,
 			switchTeamGatewayAddress,
-		)
+			switchTeamAccessList,
+		))
 	}
 	addTeamVlan(teams[0], red1Vlan)
 	addTeamVlan(teams[1], red2Vlan)
@@ -111,8 +126,8 @@ func (sw *Switch) ConfigureTeamEthernet(teams [6]*model.Team) error {
 	addTeamVlan(teams[3], blue1Vlan)
 	addTeamVlan(teams[4], blue2Vlan)
 	addTeamVlan(teams[5], blue3Vlan)
-	if len(addTeamVlansCommand) > 0 {
-		_, err = sw.runConfigCommand(addTeamVlansCommand)
+	if addTeamVlansCommand.Len() > 0 {
+		_, err = sw.runConfigCommand(addTeamVlansCommand.String())
 		if err != nil {
 			sw.Status = "ERROR"
 			return err
@@ -130,7 +145,7 @@ func (sw *Switch) ConfigureTeamEthernet(teams [6]*model.Team) error {
 // returns it as a string.
 func (sw *Switch) runCommand(command string) (string, error) {
 	// Open a Telnet connection to the switch.
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", sw.address, sw.port))
+	conn, err := net.Dial("tcp", net.JoinHostPort(sw.address, strconv.Itoa(sw.port)))
 	if err != nil {
 		return "", err
 	}
@@ -156,9 +171,38 @@ func (sw *Switch) runCommand(command string) (string, error) {
 	var reader bytes.Buffer
 	_, err = reader.ReadFrom(conn)
 	if err != nil {
+		if isIgnorableTelnetReadError(err) {
+			return reader.String(), nil
+		}
 		return "", err
 	}
 	return reader.String(), nil
+}
+
+func isIgnorableTelnetReadError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) {
+		return true
+	}
+
+	var netErr *net.OpError
+	if errors.As(err, &netErr) {
+		if errors.Is(netErr.Err, net.ErrClosed) || errors.Is(netErr.Err, syscall.ECONNRESET) || errors.Is(netErr.Err, syscall.ECONNABORTED) {
+			return true
+		}
+		var syscallErr *os.SyscallError
+		if errors.As(netErr.Err, &syscallErr) {
+			if errors.Is(syscallErr.Err, syscall.ECONNRESET) || errors.Is(syscallErr.Err, syscall.ECONNABORTED) {
+				return true
+			}
+		}
+	}
+
+	errText := strings.ToLower(err.Error())
+	return strings.Contains(errText, "connection reset by peer") || strings.Contains(errText, "connection aborted")
 }
 
 // Logs into the switch via Telnet and runs the given command in global configuration mode. Reads the output
