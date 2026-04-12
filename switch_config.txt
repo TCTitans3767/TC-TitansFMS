@@ -17,6 +17,8 @@ ip routing
 !
 ip dhcp excluded-address 10.0.100.1 10.0.100.125
 ip dhcp excluded-address 10.0.100.200 10.0.100.225
+ip dhcp excluded-address 10.0.200.1 10.0.200.19
+ip dhcp excluded-address 10.0.200.200 10.0.200.254
 !
 ip dhcp pool dhcppool
  network 10.0.100.0 255.255.255.0
@@ -25,7 +27,15 @@ ip dhcp pool dhcppool
  default-router 10.0.100.3
  lease 7
 !
-ip route 0.0.0.0 0.0.0.0 10.0.100.1
+ip dhcp pool dhcppool-internet
+ network 10.0.200.0 255.255.255.0
+ dns-server 8.8.8.8 8.8.4.4
+ default-router 10.0.200.4
+ lease 7
+!
+! No static default route - the default route is learned via DHCP on the WAN
+! uplink (port 48 / Vlan200). When port 48 is connected, the upstream device
+! assigns an IP and gateway which the switch installs automatically.
 ip route 10.0.0.0 255.0.0.0 Null0
 !
 lldp run
@@ -211,59 +221,103 @@ interface GigabitEthernet1/0/43
  switchport mode access
 !
 interface GigabitEthernet1/0/44
- switchport access vlan 100
+ description Internet-Only
+ switchport access vlan 300
  switchport mode access
 !
 interface GigabitEthernet1/0/45
- switchport access vlan 100
+ description Internet-Only
+ switchport access vlan 300
  switchport mode access
 !
 interface GigabitEthernet1/0/46
- switchport access vlan 100
+ description Internet-Only
+ switchport access vlan 300
  switchport mode access
 !
 interface GigabitEthernet1/0/47
- switchport access vlan 100
+ description Internet-Only
+ switchport access vlan 300
  switchport mode access
 !
 interface GigabitEthernet1/0/48
- switchport access vlan 100
+ description WAN-Uplink
+ switchport access vlan 200
  switchport mode access
 !
 interface Vlan1
  ip address 10.0.0.3 255.255.255.0
+ ip nat inside
 !
 interface Vlan10
  ip address 10.0.1.4 255.255.255.0
  ip access-group DS-FMS in
+ ip nat inside
 !
 interface Vlan20
  ip address 10.0.2.4 255.255.255.0
  ip access-group DS-FMS in
+ ip nat inside
 !
 interface Vlan30
  ip address 10.0.3.4 255.255.255.0
  ip access-group DS-FMS in
+ ip nat inside
 !
 interface Vlan40
  ip address 10.0.4.4 255.255.255.0
  ip access-group DS-FMS in
+ ip nat inside
 !
 interface Vlan50
  ip address 10.0.5.4 255.255.255.0
  ip access-group DS-FMS in
+ ip nat inside
 !
 interface Vlan60
  ip address 10.0.6.4 255.255.255.0
  ip access-group DS-FMS in
+ ip nat inside
 !
 interface Vlan100
  ip address 10.0.100.3 255.255.255.0
+ ip nat inside
+!
+! ===== WAN uplink VLAN =====
+! Port 48 connects to an ethernet hotspot or venue uplink. The switch
+! acts as a DHCP client here - the upstream device assigns it one IP
+! address. NAT (masquerade) then hides ALL internal traffic behind that
+! single IP, so the upstream only ever sees one device.
+interface Vlan200
+ description WAN-Uplink
+ ip address dhcp
+ ip nat outside
+!
+! ===== Internet-only VLAN =====
+! Ports 44-47. Devices here get internet access but are completely
+! blocked from reaching any FMS or team network addresses.
+interface Vlan300
+ description Internet-Only
+ ip address 10.0.200.4 255.255.255.0
+ ip access-group INTERNET-ONLY in
+ ip nat inside
 !
 ip classless
 ip http server
 ip http secure-server
 !
+! ===== NAT (PAT / masquerade) =====
+! All traffic from internal 10.x.x.x networks going to the internet is
+! translated to the single IP the WAN port received from the upstream
+! device. To the outside world, everything looks like one machine.
+ip access-list extended NAT-INSIDE
+ permit ip 10.0.0.0 0.255.255.255 any
+!
+ip nat inside source list NAT-INSIDE interface Vlan200 overload
+!
+! ===== Team / FMS access list =====
+! Applied inbound on team VLAN interfaces (Vlan10-60).
+! Allows FMS comms and DHCP as before, plus unrestricted internet via NAT.
 ip access-list extended DS-FMS
  permit udp any eq 1145 10.0.100.0 0.0.0.255 eq 1160
  permit tcp any 10.0.100.0 0.0.0.255 eq 1750
@@ -271,6 +325,21 @@ ip access-list extended DS-FMS
  permit icmp any 10.0.0.4 0.255.255.0
  permit udp any any eq bootpc
  permit udp any any eq bootps
+ permit ip any any
+!
+! ===== Internet-only access list =====
+! Applied inbound on Vlan300 (ports 44-47).
+! DHCP is allowed first so devices can get an address.
+! Then all RFC-1918 private ranges are blocked (no access to FMS, team
+! networks, or anything else internal). Everything else (the internet) is
+! allowed and will be NATted through port 48.
+ip access-list extended INTERNET-ONLY
+ permit udp any any eq bootpc
+ permit udp any any eq bootps
+ deny ip any 10.0.0.0 0.255.255.255
+ deny ip any 172.16.0.0 0.15.255.255
+ deny ip any 192.168.0.0 0.0.255.255
+ permit ip any any
 !
 snmp-server community 1234Five RO
 !
