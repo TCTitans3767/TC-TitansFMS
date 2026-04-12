@@ -11,6 +11,120 @@ For the game-agnostic version, see [Cheesy Arena Lite](https://github.com/Team25
 | Audience Display | `10.0.100.69` | `titansfms` | `titansfms` |
 | FMS Access Pi | `10.0.100.TBD` | tbd | tbd |
 
+### Orange Pi NAT Router Setup
+
+The Cisco Catalyst 3850 runs `ipbasek9` which does not support NAT. An Orange
+Pi running Ubuntu is used as the NAT router so that all team VLANs have
+internet access at the same time as robot communications.
+
+#### Hardware requirements
+- Orange Pi running Ubuntu with **two NICs**: built-in Ethernet (WAN) and a
+  USB Ethernet dongle (LAN).
+- A phone Ethernet hotspot or venue internet drop for the WAN connection.
+
+#### Wiring diagram
+
+```
+[Phone hotspot / venue drop]
+           |
+     Orange Pi eth0  (WAN – DHCP client to hotspot/venue)
+     Orange Pi eth1  (LAN – USB dongle, static 10.0.100.2/24)
+           |
+   3850 Gi1/0/7  (access port, VLAN 100)
+           |
+   3850 VLAN 100 SVI  (10.0.100.3/24, switch gateway)
+           |
+   All other VLANs (10/20/30/40/50/60/300) routed by the switch
+```
+
+#### IP plan
+
+| Device / Interface | IP | Notes |
+|:------------------:|:--:|:-----:|
+| Orange Pi LAN (eth1) | `10.0.100.2/24` | Static; NAT router LAN |
+| Switch VLAN 100 SVI | `10.0.100.3/24` | Switch L3 gateway |
+| Switch default route | via `10.0.100.2` | Internet next-hop = Orange Pi |
+
+#### Switch changes summary
+
+- **Removed**: all `ip nat inside` / `ip nat outside` commands and the
+  `NAT-INSIDE` ACL (unsupported on `ipbasek9`).
+- **Removed**: `ip address dhcp` on `interface Vlan200` (WAN is now on the Pi).
+- **Added**: `ip route 0.0.0.0 0.0.0.0 10.0.100.2` default route.
+- **Updated**: `GigabitEthernet1/0/7` is now the dedicated Orange Pi LAN port
+  (`description OrangePi-NAT-LAN`, `spanning-tree portfast`).
+
+#### Ubuntu setup on the Orange Pi
+
+Replace `eth0` / `eth1` with the actual interface names shown by `ip link`.
+
+**1. Set a static LAN IP (netplan – persistent across reboots)**
+
+Create `/etc/netplan/99-orangepi-lan.yaml`:
+
+```yaml
+network:
+  version: 2
+  ethernets:
+    eth1:
+      addresses:
+        - 10.0.100.2/24
+```
+
+Apply:
+
+```bash
+sudo netplan apply
+```
+
+**2. Enable IPv4 forwarding (persistent)**
+
+```bash
+echo 'net.ipv4.ip_forward=1' | sudo tee /etc/sysctl.d/99-ip-forward.conf
+sudo sysctl -p /etc/sysctl.d/99-ip-forward.conf
+```
+
+**3. Configure NAT and forwarding rules**
+
+```bash
+# NAT outbound traffic on WAN interface
+sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+
+# Allow forwarding from LAN to WAN
+sudo iptables -A FORWARD -i eth1 -o eth0 -j ACCEPT
+
+# Allow return traffic from WAN back to LAN
+sudo iptables -A FORWARD -i eth0 -o eth1 -m state --state ESTABLISHED,RELATED -j ACCEPT
+```
+
+**4. Make iptables rules persistent**
+
+Install `iptables-persistent` and save:
+
+```bash
+sudo apt-get install -y iptables-persistent
+sudo netfilter-persistent save
+```
+
+Rules are automatically restored on boot by `netfilter-persistent`.
+
+#### Verification
+
+On the **switch**:
+
+```
+show ip route | include 0.0.0.0     ! should show default route via 10.0.100.2
+ping 8.8.8.8 source vlan100         ! should succeed once Pi WAN is up
+```
+
+On the **Orange Pi**:
+
+```bash
+ip route                              # default route via hotspot on eth0
+sudo iptables -t nat -S | grep MASQUERADE  # NAT rule present
+curl -s https://ifconfig.me          # shows public WAN IP
+```
+
 ## Key features
 
 **For participants and spectators**

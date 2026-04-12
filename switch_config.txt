@@ -1,6 +1,13 @@
 ! Baseline configuration for Cisco Catalyst 3850 48-port switch
 ! Adapted from Team254 cheesy-arena switch_config.txt (3500-series)
 !
+! Architecture note: NAT is NOT performed on this switch (ipbasek9 does not
+! support it). An Orange Pi running Ubuntu acts as the NAT router:
+!   - Orange Pi WAN (eth0) -> phone hotspot / venue internet drop
+!   - Orange Pi LAN (eth1/USB dongle) -> Gi1/0/7 (VLAN100 access port)
+! The switch handles all inter-VLAN routing and ACLs; internet-bound traffic
+! is forwarded to the Orange Pi via the default route (10.0.100.2).
+!
 version 16.0
 no service pad
 service timestamps debug datetime msec
@@ -33,9 +40,9 @@ ip dhcp pool dhcppool-internet
  default-router 10.0.200.4
  lease 7
 !
-! No static default route - the default route is learned via DHCP on the WAN
-! uplink (port 48 / Vlan200). When port 48 is connected, the upstream device
-! assigns an IP and gateway which the switch installs automatically.
+! Default route points to the Orange Pi LAN IP (10.0.100.2) on VLAN100.
+! The Orange Pi performs NAT to the internet for all VLANs routed here.
+ip route 0.0.0.0 0.0.0.0 10.0.100.2
 ip route 10.0.0.0 255.0.0.0 Null0
 !
 lldp run
@@ -72,9 +79,12 @@ interface GigabitEthernet1/0/6
  switchport mode trunk
 !
 ! ===== Access ports =====
+! Gi1/0/7 is reserved for the Orange Pi NAT router LAN connection.
 interface GigabitEthernet1/0/7
+ description OrangePi-NAT-LAN
  switchport access vlan 100
  switchport mode access
+ spanning-tree portfast
 !
 interface GigabitEthernet1/0/8
  switchport access vlan 100
@@ -247,51 +257,41 @@ interface GigabitEthernet1/0/48
 !
 interface Vlan1
  ip address 10.0.0.3 255.255.255.0
- ip nat inside
 !
 interface Vlan10
  ip address 10.0.1.4 255.255.255.0
  ip access-group DS-FMS in
- ip nat inside
 !
 interface Vlan20
  ip address 10.0.2.4 255.255.255.0
  ip access-group DS-FMS in
- ip nat inside
 !
 interface Vlan30
  ip address 10.0.3.4 255.255.255.0
  ip access-group DS-FMS in
- ip nat inside
 !
 interface Vlan40
  ip address 10.0.4.4 255.255.255.0
  ip access-group DS-FMS in
- ip nat inside
 !
 interface Vlan50
  ip address 10.0.5.4 255.255.255.0
  ip access-group DS-FMS in
- ip nat inside
 !
 interface Vlan60
  ip address 10.0.6.4 255.255.255.0
  ip access-group DS-FMS in
- ip nat inside
 !
 interface Vlan100
  ip address 10.0.100.3 255.255.255.0
- ip nat inside
 !
-! ===== WAN uplink VLAN =====
-! Port 48 connects to an ethernet hotspot or venue uplink. The switch
-! acts as a DHCP client here - the upstream device assigns it one IP
-! address. NAT (masquerade) then hides ALL internal traffic behind that
-! single IP, so the upstream only ever sees one device.
+! ===== Former WAN uplink VLAN =====
+! Port 48 is no longer the WAN uplink. WAN is now handled by the Orange Pi
+! (see README: Orange Pi NAT Router Setup). VLAN200 is left unaddressed;
+! port 48 can be used as a spare access port or left disconnected.
 interface Vlan200
- description WAN-Uplink
- ip address dhcp
- ip nat outside
+ description Unused-FormerWAN
+ no ip address
 !
 ! ===== Internet-only VLAN =====
 ! Ports 44-47. Devices here get internet access but are completely
@@ -300,24 +300,15 @@ interface Vlan300
  description Internet-Only
  ip address 10.0.200.4 255.255.255.0
  ip access-group INTERNET-ONLY in
- ip nat inside
 !
 ip classless
 ip http server
 ip http secure-server
 !
-! ===== NAT (PAT / masquerade) =====
-! All traffic from internal 10.x.x.x networks going to the internet is
-! translated to the single IP the WAN port received from the upstream
-! device. To the outside world, everything looks like one machine.
-ip access-list extended NAT-INSIDE
- permit ip 10.0.0.0 0.255.255.255 any
-!
-ip nat inside source list NAT-INSIDE interface Vlan200 overload
-!
 ! ===== Team / FMS access list =====
 ! Applied inbound on team VLAN interfaces (Vlan10-60).
-! Allows FMS comms and DHCP as before, plus unrestricted internet via NAT.
+! Allows FMS comms and DHCP. Internet access is provided via the
+! Orange Pi NAT router (10.0.100.2) through the switch default route.
 ip access-list extended DS-FMS
  permit udp any eq 1145 10.0.100.0 0.0.0.255 eq 1160
  permit tcp any 10.0.100.0 0.0.0.255 eq 1750
@@ -332,7 +323,7 @@ ip access-list extended DS-FMS
 ! DHCP is allowed first so devices can get an address.
 ! Then all RFC-1918 private ranges are blocked (no access to FMS, team
 ! networks, or anything else internal). Everything else (the internet) is
-! allowed and will be NATted through port 48.
+! allowed and forwarded to the Orange Pi NAT router via the default route.
 ip access-list extended INTERNET-ONLY
  permit udp any any eq bootpc
  permit udp any any eq bootps
