@@ -6,7 +6,7 @@
 !   - Orange Pi WAN (eth0) -> phone hotspot / venue internet drop
 !   - Orange Pi LAN (eth1/USB dongle) -> Gi1/0/7 (VLAN100 access port)
 ! The switch handles all inter-VLAN routing and ACLs; internet-bound traffic
-! is forwarded to the Orange Pi via the default route (10.0.100.2).
+! is forwarded to the Orange Pi via the default route (10.0.100.10).
 !
 version 16.0
 no service pad
@@ -40,9 +40,9 @@ ip dhcp pool dhcppool-internet
  default-router 10.0.200.4
  lease 7
 !
-! Default route points to the Orange Pi LAN IP (10.0.100.2) on VLAN100.
+! Default route points to the Orange Pi LAN IP (10.0.100.10) on VLAN100.
 ! The Orange Pi performs NAT to the internet for all VLANs routed here.
-ip route 0.0.0.0 0.0.0.0 10.0.100.2
+ip route 0.0.0.0 0.0.0.0 10.0.100.10
 ip route 10.0.0.0 255.0.0.0 Null0
 !
 lldp run
@@ -308,7 +308,7 @@ ip http secure-server
 ! ===== Team / FMS access list =====
 ! Applied inbound on team VLAN interfaces (Vlan10-60).
 ! Allows FMS comms and DHCP. Internet access is provided via the
-! Orange Pi NAT router (10.0.100.2) through the switch default route.
+! Orange Pi NAT router (10.0.100.10) through the switch default route.
 ip access-list extended DS-FMS
  permit udp any eq 1145 10.0.100.0 0.0.0.255 eq 1160
  permit tcp any 10.0.100.0 0.0.0.255 eq 1750
