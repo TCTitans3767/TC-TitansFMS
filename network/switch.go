@@ -104,6 +104,7 @@ func (sw *Switch) ConfigureTeamEthernet(teams [6]*model.Team) error {
 				"ip dhcp pool dhcp%d\n"+
 				"network 10.%s.0 255.255.255.0\n"+
 				"default-router 10.%s.%d\n"+
+				"dns-server 8.8.8.8 8.8.4.4\n"+
 				"lease 7\n"+
 				"interface Vlan%d\nip address 10.%s.%d 255.255.255.0\nip access-group %s in\n",
 			teamPartialIp,
