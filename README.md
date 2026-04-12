@@ -120,9 +120,9 @@ ping 8.8.8.8 source vlan100         ! should succeed once Pi WAN is up
 On the **Orange Pi**:
 
 ```bash
-ip route                                      # default route via hotspot on eth0
-sudo iptables -t nat -S | grep MASQUERADE     # NAT rule present
-curl -s https://ifconfig.me                   # shows public WAN IP
+ip route                              # default route via hotspot on eth0
+sudo iptables -t nat -S | grep MASQUERADE  # NAT rule present
+curl -s https://ifconfig.me          # shows public WAN IP
 ```
 
 ## Key features
