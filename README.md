@@ -28,7 +28,7 @@ internet access at the same time as robot communications.
 [Phone hotspot / venue drop]
            |
      Orange Pi eth0  (WAN – DHCP client to hotspot/venue)
-     Orange Pi eth1  (LAN – USB dongle, static 10.0.100.2/24)
+     Orange Pi eth1  (LAN – USB dongle, static 10.0.100.10/24)
            |
    3850 Gi1/0/7  (access port, VLAN 100)
            |
@@ -41,16 +41,16 @@ internet access at the same time as robot communications.
 
 | Device / Interface | IP | Notes |
 |:------------------:|:--:|:-----:|
-| Orange Pi LAN (eth1) | `10.0.100.2/24` | Static; NAT router LAN |
+| Orange Pi LAN (eth1) | `10.0.100.10/24` | Static; NAT router LAN |
 | Switch VLAN 100 SVI | `10.0.100.3/24` | Switch L3 gateway |
-| Switch default route | via `10.0.100.2` | Internet next-hop = Orange Pi |
+| Switch default route | via `10.0.100.10` | Internet next-hop = Orange Pi |
 
 #### Switch changes summary
 
 - **Removed**: all `ip nat inside` / `ip nat outside` commands and the
   `NAT-INSIDE` ACL (unsupported on `ipbasek9`).
 - **Removed**: `ip address dhcp` on `interface Vlan200` (WAN is now on the Pi).
-- **Added**: `ip route 0.0.0.0 0.0.0.0 10.0.100.2` default route.
+- **Added**: `ip route 0.0.0.0 0.0.0.0 10.0.100.10` default route.
 - **Updated**: `GigabitEthernet1/0/7` is now the dedicated Orange Pi LAN port
   (`description OrangePi-NAT-LAN`, `spanning-tree portfast`).
 
@@ -68,7 +68,7 @@ network:
   ethernets:
     eth1:
       addresses:
-        - 10.0.100.2/24
+        - 10.0.100.10/24
 ```
 
 Apply:
@@ -113,7 +113,7 @@ Rules are automatically restored on boot by `netfilter-persistent`.
 On the **switch**:
 
 ```
-show ip route | include 0.0.0.0     ! should show default route via 10.0.100.2
+show ip route | include 0.0.0.0     ! should show default route via 10.0.100.10
 ping 8.8.8.8 source vlan100         ! should succeed once Pi WAN is up
 ```
 
