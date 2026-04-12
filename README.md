@@ -4,6 +4,13 @@ A field management system that just works.
 
 For the game-agnostic version, see [Cheesy Arena Lite](https://github.com/Team254/cheesy-arena-lite).
 
+## TC Titan Specifics
+### IPs, Usernames, and Passwords
+| Device | IP | Username | Password |
+|:------:|:--:|:--------:|:--------:|
+| Audience Display | `10.0.100.69` | `titansfms` | `titansfms` |
+| FMS Access Pi | `10.0.100.TBD` | tbd | tbd |
+
 ## Key features
 
 **For participants and spectators**
