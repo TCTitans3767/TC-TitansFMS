@@ -42,6 +42,9 @@ ip dhcp pool dhcppool-internet
 !
 ! Default route points to the Orange Pi LAN IP (10.0.100.10) on VLAN100.
 ! The Orange Pi performs NAT to the internet for all VLANs routed here.
+! IMPORTANT: The Orange Pi must have a static return route for all team
+! subnets, otherwise DS internet access (WAN) will not work:
+!   sudo ip route add 10.0.0.0/8 via 10.0.100.3   (on the Orange Pi)
 ip route 0.0.0.0 0.0.0.0 10.0.100.10
 ip route 10.0.0.0 255.0.0.0 Null0
 !
@@ -52,6 +55,19 @@ spanning-tree portfast default
 spanning-tree extend system-id
 !
 vlan internal allocation policy ascending
+!
+! ===== VLAN database =====
+! VLANs must be explicitly created here so their SVIs come up and ports
+! assigned to them forward traffic (orange/amber LED = inactive VLAN).
+! VLANs 10-60 are provisioned dynamically by the FMS at match time.
+vlan 100
+ name FMS-Management
+!
+vlan 200
+ name Unused-FormerWAN
+!
+vlan 300
+ name Internet-Only
 !
 ! ===== Trunk ports (uplinks / AP / etc) =====
 interface GigabitEthernet1/0/1
